@@ -50,7 +50,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Apply pinned upstream build fix
         working-directory: upstream
-        run: patch -p1 < ../patches/muse-code-bash.patch
+        run: |
+          patch -p1 < ../patches/muse-code-bash.patch
+          patch -p1 < ../patches/individual-image-targets.patch
       - name: Build and push both Linux architectures
         if: inputs.target != 'verify'
         working-directory: upstream

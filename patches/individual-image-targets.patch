@@ -1,0 +1,13 @@
+diff --git a/image-build/scripts/lib/targets.sh b/image-build/scripts/lib/targets.sh
+--- a/image-build/scripts/lib/targets.sh
++++ b/image-build/scripts/lib/targets.sh
+@@ -120,3 +120,9 @@ resolve_targets() {
+     *)
++      for step in "${ALL_STEP_IDS[@]}"; do
++        if [[ "$1" == "$step" ]]; then
++          echo "$1"
++          return 0
++        fi
++      done
+       return 1
+       ;;
