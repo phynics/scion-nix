@@ -13,20 +13,23 @@ let
   pullCommands = lib.concatMapStringsSep "\n" (image:
     let
       reference = "ghcr.io/phynics/${image.name}@${image.digest}";
-      tag = "ghcr.io/phynics/${image.name}:latest";
     in
     ''
       "$runtime" pull ${lib.escapeShellArg reference}
-      "$runtime" tag ${lib.escapeShellArg reference} ${lib.escapeShellArg tag}
+      "$runtime" tag ${lib.escapeShellArg reference} "$target_registry/${image.name}:latest"
     '') images;
 in
 pkgs.writeShellApplication {
   name = "scion-pull-images";
   text = ''
     runtime="''${1:-podman}"
+    target_registry="''${2:-ghcr.io/phynics}"
     case "$runtime" in
       podman|docker) ;;
       *) echo "Use podman or docker" >&2; exit 2 ;;
+    esac
+    case "$target_registry" in
+      *[!a-zA-Z0-9./:_-]*|"") echo "Invalid target registry" >&2; exit 2 ;;
     esac
     command -v "$runtime" > /dev/null || { echo "$runtime is not installed" >&2; exit 1; }
     ${pullCommands}

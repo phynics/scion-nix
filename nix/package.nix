@@ -20,6 +20,18 @@ buildGoModule {
   pname = "google-scion";
   inherit version src;
   vendorHash = "sha256-8FwhN7R4FSn/nIyxXmK8elqM1Ty72ws+pBDv0H/czXU=";
+  postPatch = ''
+    # The pinned handler checks a resource name that has no registered read grant.
+    substituteInPlace pkg/hub/handlers_runtime_brokers.go \
+      --replace-fail 'Resource{Type: "runtime_broker", ID: id}, ActionRead' 'Resource{Type: "broker", ID: id}, ActionRead' \
+      --replace-fail 'Resource{Type: "runtime_broker", ID: brokerID}, ActionRead' 'Resource{Type: "broker", ID: brokerID}, ActionRead'
+
+    # Defaults are merged as maps. Remove these before embedding so a site can
+    # really opt out of Kubernetes and the remote profile.
+    substituteInPlace pkg/config/embeds/default_settings.yaml \
+      --replace-fail $'  kubernetes:\n    type: kubernetes\n    context: ""\n    namespace: ""\n' "" \
+      --replace-fail $'  remote:\n    runtime: kubernetes\n' ""
+  '';
   subPackages = [ "cmd/scion" ];
   ldflags = [
     "-X github.com/GoogleCloudPlatform/scion/pkg/version.Version=${version}"
