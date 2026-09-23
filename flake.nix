@@ -22,14 +22,18 @@
     {
       packages = forSystems (pkgs:
         let
-          google-scion = pkgs.callPackage ./nix/package.nix {
+          google-scion-source = pkgs.callPackage ./nix/package.nix {
             src = scion-src;
             version = upstream.version;
             rev = upstream.rev;
           };
+          google-scion = import ./nix/published-binaries.nix {
+            inherit pkgs;
+            version = upstream.version;
+          };
         in
         {
-          inherit google-scion;
+          inherit google-scion google-scion-source;
           default = google-scion;
         });
 
@@ -38,6 +42,7 @@
 
       checks = forSystems (pkgs: {
         package = self.packages.${pkgs.stdenv.hostPlatform.system}.google-scion;
+        source = self.packages.${pkgs.stdenv.hostPlatform.system}.google-scion-source;
         modules = import ./nix/tests/modules.nix { inherit pkgs nixpkgs nix-darwin self; };
       });
     };

@@ -38,3 +38,4 @@ jobs:
       - run: nix flake check --show-trace
       - run: nix build .#google-scion --print-build-logs
       - run: ./result/bin/scion version
+      - run: nix build .#google-scion-source --no-link --print-build-logs

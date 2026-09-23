@@ -4,14 +4,14 @@ Nix packaging and deployment modules for [Scion](https://googlecloudplatform.git
 
 The flake pins upstream Scion to `v0.3.0-preview.3` and builds the Go CLI with the web dashboard embedded. [PLAN.md](PLAN.md) tracks the release criteria and the remaining live deployment tests.
 
-Build and check the native package:
+Install the published native binary without compiling Scion:
 
 ```sh
 nix build github:phynics/scion-nix#google-scion
 ./result/bin/scion version
 ```
 
-Until the public binary cache is configured and populated, `nix build` can compile Scion locally. For a ready-made binary without a compiler, use the GitHub release assets once the [release workflow](.github/workflows/release.yml) has published them.
+`packages.google-scion` downloads a hash-checked GitHub release asset. To rebuild the same pinned source with Nix, use `nix build .#google-scion-source`. CI builds both packages on all four platforms. A public Cachix cache will also provide substitutes for the source-built package when configured.
 
 ### NixOS
 

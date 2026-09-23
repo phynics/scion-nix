@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@v31
       - run: nix flake check --show-trace
-      - run: nix build .#google-scion --print-build-logs
+      - run: nix build .#google-scion-source --print-build-logs
       - name: Package native binary
         shell: bash
         run: |
