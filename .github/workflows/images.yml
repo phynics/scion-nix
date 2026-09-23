@@ -2,6 +2,13 @@ name: Build Scion images
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: "all, a single upstream image step, or verify existing images"
+        type: choice
+        required: true
+        default: all
+        options: [all, scion-muse-code, scion-opencode, scion-hub, verify]
 
 permissions:
   contents: read
@@ -41,18 +48,24 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Apply pinned upstream build fix
+        working-directory: upstream
+        run: patch -p1 < ../patches/muse-code-bash.patch
       - name: Build and push both Linux architectures
+        if: inputs.target != 'verify'
         working-directory: upstream
         env:
           IMAGE_TAG: ${{ steps.pin.outputs.tag }}
+          TARGET: ${{ inputs.target }}
         run: |
           image-build/scripts/build-images.sh \
-            --target all \
+            --target "$TARGET" \
             --platform all \
             --registry ghcr.io/phynics \
             --tag "$IMAGE_TAG" \
             --push
       - name: Inspect published image manifests
+        if: inputs.target == 'all' || inputs.target == 'verify'
         working-directory: upstream
         env:
           IMAGE_TAG: ${{ steps.pin.outputs.tag }}
@@ -88,6 +101,7 @@ jobs:
             '{upstreamRev: $rev, tag: $tag, images: .}' \
             "$RUNNER_TEMP/images.jsonl" > "$RUNNER_TEMP/image-manifest.json"
       - uses: actions/upload-artifact@v4
+        if: inputs.target == 'all' || inputs.target == 'verify'
         with:
           name: image-manifest
           path: ${{ runner.temp }}/image-manifest.json
