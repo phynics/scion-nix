@@ -1,0 +1,33 @@
+name: Publish Nix packages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check publication prerequisites
+        env:
+          CACHIX_NAME: ${{ vars.CACHIX_NAME }}
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
+          test -f flake.nix || { echo 'flake.nix is required'; exit 1; }
+          test -n "$CACHIX_NAME" || { echo 'Set the CACHIX_NAME repository variable'; exit 1; }
+          test -n "$CACHIX_AUTH_TOKEN" || { echo 'Set the CACHIX_AUTH_TOKEN repository secret'; exit 1; }
+      - uses: cachix/install-nix-action@v31
+      - uses: cachix/cachix-action@v15
+        with:
+          name: ${{ vars.CACHIX_NAME }}
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - run: nix flake check --show-trace
+      - run: nix build .#google-scion --print-build-logs
+      - run: ./result/bin/scion version

@@ -1,0 +1,40 @@
+name: Nix builds
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    runs-on: ubuntu-24.04
+    outputs:
+      has_flake: ${{ steps.detect.outputs.has_flake }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: detect
+        run: |
+          if test -f flake.nix; then
+            echo 'has_flake=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'has_flake=false' >> "$GITHUB_OUTPUT"
+            echo 'flake.nix has not been added yet.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+  build:
+    needs: detect
+    if: needs.detect.outputs.has_flake == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix flake check --show-trace
+      - run: nix build .#google-scion --print-build-logs
+      - run: ./result/bin/scion version

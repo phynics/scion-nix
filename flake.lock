@@ -1,0 +1,67 @@
+{
+  "nodes": {
+    "nix-darwin": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1783744694,
+        "narHash": "sha256-2cp6N3rrwnGYLTx9l6N+NI+kwrCWxvJUbj5WJhvB29A=",
+        "owner": "nix-darwin",
+        "repo": "nix-darwin",
+        "rev": "c3e90c89649b07d1a96e4b9dd6cd0d6e44b91a74",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-darwin",
+        "ref": "nix-darwin-26.05",
+        "repo": "nix-darwin",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1790071232,
+        "narHash": "sha256-S27lKsLB2rrtg/OfNIRsFTJJWXv1FLAhapm/P8HM2V8=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "e9b6aa075c9364c5d152b7657c41349998391daf",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixpkgs-26.05-darwin",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "nix-darwin": "nix-darwin",
+        "nixpkgs": "nixpkgs",
+        "scion-src": "scion-src"
+      }
+    },
+    "scion-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1789430718,
+        "narHash": "sha256-MY/El6R98WQleC+jLKaK8Ml0pT7fSzUzkbJLaw1dmh8=",
+        "owner": "GoogleCloudPlatform",
+        "repo": "scion",
+        "rev": "253ba544c21255121d4059638c9b5c74b56ee42e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "GoogleCloudPlatform",
+        "repo": "scion",
+        "rev": "253ba544c21255121d4059638c9b5c74b56ee42e",
+        "type": "github"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

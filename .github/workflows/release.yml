@@ -1,0 +1,72 @@
+name: Release native binaries
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix flake check --show-trace
+      - run: nix build .#google-scion --print-build-logs
+      - name: Package native binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$(uname -s)" in
+            Linux) os=linux ;;
+            Darwin) os=darwin ;;
+          esac
+          case "$(uname -m)" in
+            x86_64) arch=amd64 ;;
+            aarch64|arm64) arch=arm64 ;;
+          esac
+          mkdir -p dist
+          tar -C result/bin -czf "dist/scion-${os}-${arch}.tar.gz" scion
+          if command -v sha256sum > /dev/null; then
+            sha256sum "dist/scion-${os}-${arch}.tar.gz" > "dist/scion-${os}-${arch}.sha256"
+          else
+            shasum -a 256 "dist/scion-${os}-${arch}.tar.gz" > "dist/scion-${os}-${arch}.sha256"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scion-${{ matrix.runner }}
+          path: dist/*
+          if-no-files-found: error
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: scion-*
+          path: dist
+          merge-multiple: true
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(jq -r '.version' upstream.json)"
+          rev="$(jq -r '.rev' upstream.json)"
+          tag="${version}-nix.1"
+          test "$(compgen -G 'dist/*.tar.gz' | wc -l)" -eq 4
+          gh release create "$tag" dist/* \
+            --target "$GITHUB_SHA" \
+            --title "Scion $version (Nix build)" \
+            --notes "Built from upstream $rev and repository $GITHUB_SHA. See PLAN.md for service and image deployment status." \
+            --prerelease
