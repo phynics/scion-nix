@@ -1,0 +1,30 @@
+{
+  "upstreamRev": "253ba544c21255121d4059638c9b5c74b56ee42e",
+  "tag": "scion-v0.3.0-preview.3",
+  "images": [
+    { "name": "core-base", "platform": "linux/amd64", "digest": "sha256:396f23a3751f8e42000df58346b52a5492d07d5e54feeb5226b0117b2e15396d" },
+    { "name": "core-base", "platform": "linux/arm64", "digest": "sha256:c0bbef870bd7ef82c81d871e50c1427ac558a373aed3c44a6aa2e24840c11be2" },
+    { "name": "scion-base", "platform": "linux/amd64", "digest": "sha256:c2496500acc6497e51a0c914ac5f4780748902359355eb5392a718f10b98bc3c" },
+    { "name": "scion-base", "platform": "linux/arm64", "digest": "sha256:491524e9fba25144f5204f6450f4a5351e12364d2ee8a7d61d47ce1c1e11ff2a" },
+    { "name": "scion-hub", "platform": "linux/amd64", "digest": "sha256:052a43773d28ca7ca14429a94eaea171e3ac66cfeaf607f9dc184d679c778685" },
+    { "name": "scion-hub", "platform": "linux/arm64", "digest": "sha256:26aae5027cfad644a189f5914fac7eb97919c76a4d40648668839e8279584866" },
+    { "name": "scion-antigravity", "platform": "linux/amd64", "digest": "sha256:ca31111b1510be0170ecd592cbf800eb0578312f7a620182790d379287b51ada" },
+    { "name": "scion-antigravity", "platform": "linux/arm64", "digest": "sha256:bec4ad910ca08603acb5e2002040413d7d42cf858b7a39f79fe244cc1598fbf0" },
+    { "name": "scion-claude", "platform": "linux/amd64", "digest": "sha256:cf74cae9102917fb8da68226afaf7a3976757fb049b73974d262a5262f7ac294" },
+    { "name": "scion-claude", "platform": "linux/arm64", "digest": "sha256:1fd2c9cb91bf05b75dcea0b0324ccac7f3fe7e691b883acfaa50c066eaabe994" },
+    { "name": "scion-codex", "platform": "linux/amd64", "digest": "sha256:f5a5a2b5bca6cff25c04c2ed7734192ea699f7ee69a78f3e285b592d8e57a25d" },
+    { "name": "scion-codex", "platform": "linux/arm64", "digest": "sha256:466eec55b7c81607c5f3409d55483590ba89e9a7b0d1e4b7c14e4d9e75b3623b" },
+    { "name": "scion-copilot", "platform": "linux/amd64", "digest": "sha256:99b82164b33af5142b43923fa780320d1e5871702a3a2d2bdc222a8e7d92e102" },
+    { "name": "scion-copilot", "platform": "linux/arm64", "digest": "sha256:ae785570f77811a366004fda3b760cdd914e8e0cd643a428dfd4c9087b56f95c" },
+    { "name": "scion-gemini-cli", "platform": "linux/amd64", "digest": "sha256:766eddeba36faeb72720e05e2519f236d9c9011f9057b500ae200b8ecb3b5ded" },
+    { "name": "scion-gemini-cli", "platform": "linux/arm64", "digest": "sha256:58abf70c66342d11810fcf6a939af49fb3e385181ae77a6843389d831762cd95" },
+    { "name": "scion-grok-build", "platform": "linux/amd64", "digest": "sha256:f565184e31fc90ecccf2bc55e30ad4eb77eb803c57d2ec8096e36b5f82bf12bc" },
+    { "name": "scion-grok-build", "platform": "linux/arm64", "digest": "sha256:79e59b076fdb68e967ea2977c959e96f0ac506ddcd7b8e3ed7f9b06b28602829" },
+    { "name": "scion-hermes", "platform": "linux/amd64", "digest": "sha256:f3ccfe0203d48edcd5c8a47353e07cf69fa7c33a338b931cacba6b93c8533414" },
+    { "name": "scion-hermes", "platform": "linux/arm64", "digest": "sha256:878ec7d174c35411ff28c665d323a164c1d86387aac423dd504c0eda09b5ac9c" },
+    { "name": "scion-muse-code", "platform": "linux/amd64", "digest": "sha256:396ae7e66b9caddbf59b5b01d5192442dbc2eb89196b35c2c7d739f77bfbb5de" },
+    { "name": "scion-muse-code", "platform": "linux/arm64", "digest": "sha256:62221a0e7c87a19aeee04d65b7dd9cc0db8350fbd9b240518230b62071b2e246" },
+    { "name": "scion-opencode", "platform": "linux/amd64", "digest": "sha256:587efa9cb5d0b4d5cd426907a25253433d359a52d1bec7e09f629cbfaf7d26a7" },
+    { "name": "scion-opencode", "platform": "linux/arm64", "digest": "sha256:e9f51eb627144f00be7a736de1241062772f32479f8b6fc0fee8195752f258a2" }
+  ]
+}
