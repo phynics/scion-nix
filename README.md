@@ -17,6 +17,8 @@ Pull the published agent images by their platform-specific immutable digests and
 
 ```sh
 nix run github:phynics/scion-nix#pull-images -- podman
+# For a local tag prefix used by an existing Scion configuration:
+nix run github:phynics/scion-nix#pull-images -- podman localhost/scion
 ```
 
 Use `docker` in place of `podman` if that is your configured runtime. The [image manifest](image-manifest.json) records the digests for both Linux architectures; macOS pulls Linux images through its container runtime. The script does not pull the optional Hub image because native services run the host binary.
@@ -35,9 +37,9 @@ Add this flake as an input, then import its module:
 { inputs, ... }: {
   imports = [ inputs.scion-nix.nixosModules.default ];
 
-  users.users.agents = {
+  users.users.scion = {
     isNormalUser = true;
-    home = "/home/agents";
+    home = "/home/scion";
     createHome = true;
     subUidRanges = [{ startUid = 100000; count = 65536; }];
     subGidRanges = [{ startGid = 100000; count = 65536; }];
@@ -46,12 +48,20 @@ Add this flake as an input, then import its module:
   programs.google-scion.enable = true;
   services.scion.workstation = {
     enable = true;
-    user = "agents";
+    user = "scion";
   };
 }
 ```
 
-The workstation process is a native systemd service. It uses the `agents` account's home and rootless container runtime. Initialize Scion under that account once, and set `profiles.local.runtime` to `podman` in its `~/.scion/settings.yaml` if the upstream auto-detection selects another runtime. A standalone native Hub needs no Podman and is configured with `services.scion.hub` instead. Enable `services.scion.broker` only when it will execute containerized agents. The module does not create accounts or overwrite existing Scion settings.
+The workstation process is a native systemd service. It uses the configured account's home and rootless container runtime. Initialize Scion under that account once, and set `profiles.local.runtime` to `podman` in its `~/.scion/settings.yaml` if the upstream auto-detection selects another runtime. A standalone native Hub needs no Podman and is configured with `services.scion.hub` instead. Enable `services.scion.broker` only when it will execute containerized agents. These modes do not create accounts or overwrite existing Scion settings.
+
+For a single hosted Hub, Web, and embedded Runtime Broker, use `services.scion.hosted`. It uses the source-built native binary with the pinned broker read permission fix and without the embedded Kubernetes runtime and remote profile. The [single-node example](examples/hosted-single-node.nix) configures OIDC, rootless Podman, and sops-nix with example values. The hosted module does not run a Hub container. The `scion-hub` image has no embedded Web assets; the `scion-omni` image targets Cloud Run Instances and would need access to the host's rootless Podman API.
+
+Hosted mode links the account's `~/.scion/settings.yaml` to its runtime `settingsFile`. If a regular settings file already exists, startup stops so it can be migrated deliberately. Put `server.oidc_login.client_secret` in a sops-nix rendered YAML file, and `SCION_SERVER_SESSION_SECRET` in a separate runtime environment file. The pinned Scion revision does not map `SCION_SERVER_OIDC_LOGIN_CLIENT_SECRET` to the YAML field. The service also sets `SCION_SERVER_BASE_URL` from `publicURL`, which determines the OIDC callback URL: `<publicURL>/auth/callback/oidc`.
+
+The hosted image pull unit runs as the service account and pulls the digest-pinned GHCR harnesses before Scion starts. It tags them under `imageRegistry`, for example `localhost/scion/scion-opencode:latest`, which matches the upstream OpenCode harness image name. `image_registry` in the rendered YAML must use the same prefix. Rootless Podman uses the host's lingered user session, `Delegate=yes`, and `PODMAN_SYSTEMD_UNIT=%n`; do not set `XDG_RUNTIME_DIR` to a synthetic directory. Set `containersStorageConf` to the existing storage config if the account has a separate graphroot. The image recipe already applies the Muse Bash installer fix.
+
+Before replacing an existing service, verify the rendered settings, database path, account permissions, and service ordering. Once deployed, check `systemctl status scion-hosted scion-images`, `systemctl show scion-hosted -p Delegate -p ControlGroup`, and `podman info` from the service account's context. Then complete OIDC login, inspect broker detail and project endpoints as Hub admin, start an OpenCode agent, and confirm its workspace and container owner. In the Hub's profile secrets page, set a user-scoped `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` for OpenCode and verify a model request. OIDC login only authenticates the Hub user. A browser PTY WebSocket must receive terminal data frames and stay attached to tmux; a direct `podman exec` tmux check does not prove that browser path works.
 
 A Hub-only configuration can run without enabling the workstation or a container runtime:
 
@@ -60,7 +70,7 @@ A Hub-only configuration can run without enabling the workstation or a container
   imports = [ inputs.scion-nix.nixosModules.default ];
   services.scion.hub = {
     enable = true;
-    user = "agents";
+    user = "scion";
     listenAddress = "127.0.0.1";
     environmentFile = config.sops.secrets.scion-hub-env.path;
   };
