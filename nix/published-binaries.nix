@@ -1,4 +1,4 @@
-{ pkgs, version }:
+{ pkgs, version, binaryRelease }:
 
 let
   platform = {
@@ -12,7 +12,7 @@ pkgs.stdenv.mkDerivation {
   pname = "google-scion";
   inherit version;
   src = pkgs.fetchurl {
-    url = "https://github.com/phynics/scion-nix/releases/download/${version}-nix.1/scion-${platform.os}-${platform.arch}.tar.gz";
+    url = "https://github.com/phynics/scion-nix/releases/download/${binaryRelease}/scion-${platform.os}-${platform.arch}.tar.gz";
     inherit (platform) sha256;
   };
   nativeBuildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.autoPatchelfHook ];
