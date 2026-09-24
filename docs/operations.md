@@ -79,7 +79,16 @@ After a `nixos-rebuild switch`, check the pieces in this order.
 | `package` | `services.scion.hub.package` |
 | unit `scion-hosted` / `scion-images` | `scion-hub` / `scion-hub-images` |
 
-The default SQLite path has moved to `/var/lib/scion-hub/hub.db`. To keep your existing data, set `databasePath` to the old file (previously `~/.scion/hub.db`, unless you had set it), or move the file into the state directory while the service is stopped.
+The default state location has moved from the account's `~/.scion` to `/var/lib/scion-hub`. That covers both the SQLite database and the local template and artifact storage. The old `hosted` service passed no `--storage-dir`, so Scion stored templates in `~/.scion/storage`. Without these settings the Hub starts up normally, but with an empty store. To keep your existing data, point both options at the old locations:
+
+```nix
+services.scion.hub = {
+  databasePath = "/home/scion/.scion/hub.db";     # previously ~/.scion/hub.db, unless you had set it
+  storagePath = "/home/scion/.scion/storage";
+};
+```
+
+Alternatively, stop the service and move both into `/var/lib/scion-hub/` (`hub.db` and `storage/`), then leave the options unset.
 
 ## Updating Scion
 

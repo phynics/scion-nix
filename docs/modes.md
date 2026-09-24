@@ -118,7 +118,7 @@ A single Hub on one node, with SQLite state. It accepts downtime during restarts
 }
 ```
 
-- **State.** SQLite (`hub.db`) and template storage live in `/var/lib/scion-hub`, the systemd `StateDirectory`, which systemd owns. To reuse an existing database, set `databasePath`. To store templates in GCS instead, set `storageBucket`.
+- **State.** SQLite (`hub.db`) and template storage live in `/var/lib/scion-hub`, the systemd `StateDirectory`, which systemd owns. To reuse an existing database or template store, set `databasePath` and `storagePath`. To store templates in GCS instead, set `storageBucket`.
 - **Without a broker**, the Hub needs no container runtime and pulls no images.
 - **With `broker.enable`**, the Hub process also runs a Runtime Broker on port 9800. The `scion-hub-images` unit pulls the harness images before startup.
 
