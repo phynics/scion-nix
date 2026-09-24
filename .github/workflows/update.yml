@@ -1,0 +1,155 @@
+name: Update Scion
+
+# Daily: if upstream has a newer release on the channel in sources.json and
+# has published its binaries, rewrite sources.json (scripts/update.py), build
+# and push that release's harness images, and open a PR with the new
+# sources.json and image-manifest.json. After merge, publish.yml moves the
+# :latest tags, publishes the server image, and tags a flake release.
+#
+# Repository settings:
+# - Settings > Actions > General: allow GitHub Actions to create pull requests.
+# - Optional secret UPDATE_TOKEN (a fine-grained token with contents and pull
+#   request write access). PRs opened with the default GITHUB_TOKEN do not
+#   trigger other workflows, so without it the PR's CI does not start; this
+#   workflow runs `nix flake check` itself before opening the PR.
+# - Optional variable AUTO_MERGE=true to enable auto-merge (squash) on the PR,
+#   which merges it once required checks pass.
+
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Exact upstream tag (default: newest on the channel)"
+        required: false
+      channel:
+        description: "Channel to follow (default: the one in sources.json)"
+        type: choice
+        options: [sources.json, preview, stable]
+        default: sources.json
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scion-update
+  cancel-in-progress: false
+
+jobs:
+  sources:
+    runs-on: ubuntu-24.04
+    outputs:
+      changed: ${{ steps.pending.outputs.pending == 'false' && steps.update.outputs.changed || 'false' }}
+      version: ${{ steps.update.outputs.version }}
+      previous: ${{ steps.update.outputs.previous }}
+      rev: ${{ steps.update.outputs.rev }}
+      image_tag: ${{ steps.update.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: Find the target release
+        id: check
+        env:
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          args=(--check)
+          if [ -n "$VERSION" ]; then args+=(--version "$VERSION"); fi
+          if [ -n "$CHANNEL" ] && [ "$CHANNEL" != sources.json ]; then args+=(--channel "$CHANNEL"); fi
+          python3 scripts/update.py "${args[@]}"
+      - name: Skip releases that already have an update PR
+        id: pending
+        env:
+          CHANGED: ${{ steps.check.outputs.changed }}
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          if [ "$CHANGED" = "true" ] && git ls-remote --exit-code --heads origin "update/scion-$VERSION" > /dev/null; then
+            echo "Branch update/scion-$VERSION already exists; review or close that PR first." >> "$GITHUB_STEP_SUMMARY"
+            echo "pending=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "pending=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Update sources.json
+        id: update
+        if: steps.check.outputs.changed == 'true' && steps.pending.outputs.pending == 'false'
+        env:
+          VERSION: ${{ steps.check.outputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          args=(--version "$VERSION")
+          if [ -n "$CHANNEL" ] && [ "$CHANNEL" != sources.json ]; then args+=(--channel "$CHANNEL"); fi
+          python3 scripts/update.py "${args[@]}"
+      - name: Build both packages from the new pin
+        if: steps.update.outputs.changed == 'true'
+        run: |
+          nix build .#google-scion-source .#google-scion --print-build-logs
+          ./result-1/bin/scion version | tail -1
+      - uses: actions/upload-artifact@v4
+        if: steps.update.outputs.changed == 'true'
+        with:
+          name: sources
+          path: sources.json
+          if-no-files-found: error
+
+  images:
+    needs: sources
+    if: needs.sources.outputs.changed == 'true'
+    uses: ./.github/workflows/images.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      rev: ${{ needs.sources.outputs.rev }}
+      tag: ${{ needs.sources.outputs.image_tag }}
+      target: all
+
+  pull-request:
+    needs: [sources, images]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: sources
+          path: .
+      - uses: actions/download-artifact@v4
+        with:
+          name: image-manifest
+          path: .
+      - uses: cachix/install-nix-action@v31
+      - name: Check the updated flake
+        run: nix flake check --print-build-logs
+      - name: Open pull request
+        id: pr
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.UPDATE_TOKEN || secrets.GITHUB_TOKEN }}
+          branch: update/scion-${{ needs.sources.outputs.version }}
+          delete-branch: true
+          add-paths: |
+            sources.json
+            image-manifest.json
+          commit-message: |
+            Update Scion to ${{ needs.sources.outputs.version }}
+
+            Upstream commit ${{ needs.sources.outputs.rev }}.
+          title: Update Scion to ${{ needs.sources.outputs.version }}
+          body: |
+            Moves the Scion pin from `${{ needs.sources.outputs.previous }}` to [`${{ needs.sources.outputs.version }}`](https://github.com/GoogleCloudPlatform/scion/releases/tag/${{ needs.sources.outputs.version }}) (commit [`${{ needs.sources.outputs.rev }}`](https://github.com/GoogleCloudPlatform/scion/commit/${{ needs.sources.outputs.rev }})).
+
+            - `sources.json`: source, npm and Go dependency hashes, upstream release binary hashes, image tag.
+            - `image-manifest.json`: per-platform digests of the harness images built from this commit, pushed as `ghcr.io/phynics/*:${{ needs.sources.outputs.image_tag }}`.
+
+            The update workflow built `google-scion-source` and `google-scion` and passed `nix flake check` on x86_64-linux. Upstream changes: https://github.com/GoogleCloudPlatform/scion/compare/${{ needs.sources.outputs.previous }}...${{ needs.sources.outputs.version }}
+
+            After merge, publish.yml moves the `:latest` image tags, publishes `scion-server`, and tags this flake as `${{ needs.sources.outputs.version }}-nix.N`.
+      - name: Enable auto-merge
+        if: vars.AUTO_MERGE == 'true' && steps.pr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.UPDATE_TOKEN || secrets.GITHUB_TOKEN }}
+          PR: ${{ steps.pr.outputs.pull-request-number }}
+        run: gh pr merge --auto --squash "$PR" --repo "$GITHUB_REPOSITORY"

@@ -40,25 +40,7 @@
     "root": {
       "inputs": {
         "nix-darwin": "nix-darwin",
-        "nixpkgs": "nixpkgs",
-        "scion-src": "scion-src"
-      }
-    },
-    "scion-src": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1789430718,
-        "narHash": "sha256-MY/El6R98WQleC+jLKaK8Ml0pT7fSzUzkbJLaw1dmh8=",
-        "owner": "GoogleCloudPlatform",
-        "repo": "scion",
-        "rev": "253ba544c21255121d4059638c9b5c74b56ee42e",
-        "type": "github"
-      },
-      "original": {
-        "owner": "GoogleCloudPlatform",
-        "repo": "scion",
-        "rev": "253ba544c21255121d4059638c9b5c74b56ee42e",
-        "type": "github"
+        "nixpkgs": "nixpkgs"
       }
     }
   },

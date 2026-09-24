@@ -1,0 +1,95 @@
+name: Publish release
+
+# Runs after a change to the Scion pin lands on main (normally an update PR
+# from update.yml):
+# - moves the harness images' :latest tags to the digests now pinned,
+# - builds and publishes the scion-server image for this pin,
+# - tags the flake as <version>-nix.<N> with a GitHub release, so users can
+#   pin github:phynics/scion-nix/<tag> and roll back by changing the ref.
+
+on:
+  push:
+    branches: [main]
+    paths: [sources.json, image-manifest.json]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scion-publish
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix flake check --print-build-logs
+
+  latest-tags:
+    needs: check
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Point :latest at the pinned images
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$(jq -r '.tag' image-manifest.json)"
+          for image in $(jq -r '[.images[].name] | unique | .[]' image-manifest.json); do
+            docker buildx imagetools create --tag "ghcr.io/phynics/$image:latest" "ghcr.io/phynics/$image:$tag"
+          done
+
+  server-image:
+    needs: check
+    uses: ./.github/workflows/server-image.yml
+    permissions:
+      contents: read
+      packages: write
+
+  release:
+    needs: [latest-tags, server-image]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag and release this pin
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(jq -r '.version' sources.json)"
+          rev="$(jq -r '.rev' sources.json)"
+          image_tag="$(jq -r '.imageTag' sources.json)"
+          n=1
+          while git ls-remote --exit-code --tags origin "refs/tags/${version}-nix.${n}" > /dev/null; do
+            n=$((n + 1))
+          done
+          tag="${version}-nix.${n}"
+          prerelease=()
+          case "$version" in *-*) prerelease=(--prerelease) ;; esac
+          gh release create "$tag" --target "$GITHUB_SHA" "${prerelease[@]}" \
+            --title "Scion $version (scion-nix.$n)" \
+            --notes "$(cat <<NOTES
+          Scion [\`$version\`](https://github.com/GoogleCloudPlatform/scion/releases/tag/$version), upstream commit \`$rev\`.
+
+          Pin this release with \`github:phynics/scion-nix/$tag\`.
+
+          - \`google-scion\`: upstream release binaries for x86_64/aarch64 Linux and macOS.
+          - Harness images: \`ghcr.io/phynics/scion-<harness>:$image_tag\`, pinned by digest in \`image-manifest.json\`.
+          - Server image: \`ghcr.io/phynics/scion-server:$image_tag\`.
+          NOTES
+          )"
