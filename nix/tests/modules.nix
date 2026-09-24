@@ -66,6 +66,19 @@ let
   singleNodeUnit = unit singleNode "scion-hub";
   singleNodeImages = unit singleNode "scion-hub-images";
 
+  # A Hub migrated from services.scion.hosted keeps the state it wrote under ~/.scion.
+  migrated = nixos {
+    services.scion.hub = {
+      enable = true;
+      user = "scion";
+      listenAddress = "0.0.0.0";
+      databasePath = "/home/scion/.scion/hub.db";
+      storagePath = "/home/scion/.scion/storage";
+      broker.enable = true;
+    };
+  };
+  migratedUnit = unit migrated "scion-hub";
+
   ha = nixos ../../examples/ha-hub.nix;
   haUnit = unit ha "scion-hub";
 
@@ -132,6 +145,11 @@ assert singleNodeImages.serviceConfig.User == "scion";
 assert lib.hasSuffix "podman localhost/scion opencode claude" singleNodeImages.serviceConfig.ExecStart;
 assert has "client_secret: test-oidc-placeholder" singleNode.config.sops.templates."scion-settings.yaml".content;
 
+# Migrated single-node Hub: existing SQLite database and template storage.
+assert builds migrated;
+assert has "--db /home/scion/.scion/hub.db --storage-dir /home/scion/.scion/storage" migratedUnit.serviceConfig.ExecStart;
+assert has "--hosted --enable-hub --host 0.0.0.0" migratedUnit.serviceConfig.ExecStart;
+
 # HA example: Postgres driver, shared hub ID, GCS storage, no local state flags.
 assert builds ha;
 assert !ha.config.virtualisation.podman.enable;
@@ -155,6 +173,7 @@ assert rejected { services.scion.hub = { enable = true; user = "a"; broker.enabl
 assert rejected { services.scion.hub = { enable = true; user = "a"; availability = "ha"; environmentFile = "/run/e"; }; };
 assert rejected { services.scion.hub = { enable = true; user = "a"; availability = "ha"; environmentFile = "/run/e"; hubId = "h"; storageBucket = "b"; broker.enable = true; }; };
 assert rejected { services.scion.hub = { enable = true; user = "a"; stateDirectory = "/var/lib/x"; }; };
+assert rejected { services.scion.hub = { enable = true; user = "a"; storagePath = "/srv/s"; storageBucket = "b"; }; };
 assert rejected { services.scion.hosted.enable = true; };
 
 # nix-darwin: Local + Workstation as a launchd user agent.

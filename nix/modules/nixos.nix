@@ -147,7 +147,7 @@ let
     ++ optionals (!isHA) [ "--db" (if hub.databasePath != null then hub.databasePath else "${hubStateDir}/hub.db") ]
     ++ (if hub.storageBucket != null
       then [ "--storage-bucket" hub.storageBucket ]
-      else [ "--storage-dir" "${hubStateDir}/storage" ])
+      else [ "--storage-dir" (if hub.storagePath != null then hub.storagePath else "${hubStateDir}/storage") ])
     ++ lib.concatMap (email: [ "--admin-emails" email ]) hub.adminEmails;
 in
 {
@@ -160,7 +160,8 @@ in
       and requiredMountsFor under services.scion.hub; brokerPort becomes
       hub.broker.port, pullImages and containersStorageConf move under
       hub.broker, and imageRegistry is programs.google-scion.imageRegistry.
-      Set hub.databasePath to keep an existing SQLite database; the new
+      Set hub.databasePath and hub.storagePath (~/.scion/hub.db and
+      ~/.scion/storage) to keep an existing Hub's data; the new
       default lives in /var/lib/<stateDirectory>.
     '')
   ];
@@ -234,6 +235,12 @@ in
           default = null;
           description = "Single-node SQLite database path. Defaults to hub.db in the state directory.";
         };
+        storagePath = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          example = "/home/scion/.scion/storage";
+          description = "Local template and artifact storage when `storageBucket` is unset. Defaults to storage in the state directory; set it to ~/.scion/storage to keep what a Hub started without --storage-dir wrote.";
+        };
         hubId = mkOption { type = types.nullOr types.str; default = null; description = "Stable Hub ID shared by every HA replica."; };
         storageBucket = mkOption { type = types.nullOr types.str; default = null; description = "GCS bucket for templates and artifacts; required for HA, optional for single-node (default: local storage in the state directory)."; };
         workingDirectory = mkOption { type = types.nullOr types.str; default = null; description = "Process working directory; defaults to the account's home."; };
@@ -261,6 +268,7 @@ in
         { assertion = !(hub.enable && isHA) || (hub.hubId != null && hub.storageBucket != null); message = "HA hosted mode needs services.scion.hub.hubId and services.scion.hub.storageBucket."; }
         { assertion = !(hub.enable && isHA) || hub.environmentFile != null; message = "HA hosted mode needs services.scion.hub.environmentFile with SCION_SERVER_DATABASE_URL and SCION_SERVER_SESSION_SECRET."; }
         { assertion = !(hub.enable && isHA) || !hub.broker.enable; message = "HA Hub replicas do not embed a Runtime Broker; run services.scion.broker on separate nodes."; }
+        { assertion = hub.storagePath == null || hub.storageBucket == null; message = "Set either services.scion.hub.storagePath (local) or services.scion.hub.storageBucket (GCS), not both."; }
         { assertion = !(hub.enable && isHA) || hub.databasePath == null; message = "services.scion.hub.databasePath applies to SQLite; set SCION_SERVER_DATABASE_URL in the environment file for HA."; }
       ];
     }

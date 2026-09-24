@@ -76,8 +76,9 @@ This service cannot be enabled together with `services.scion.hub` or `services.s
 | `settingsFile` | null or str | `null` | Runtime `settings.yaml`, symlinked into `~/.scion/settings.yaml` by `ExecStartPre`. |
 | `stateDirectory` | str | `"scion-hub"` | systemd `StateDirectory` name (mode `0700`). |
 | `databasePath` | null or str | `null` | SQLite path (single-node only). The default is `/var/lib/<stateDirectory>/hub.db`. |
+| `storagePath` | null or str | `null` | Local template and artifact storage (`--storage-dir`) when `storageBucket` is unset. The default is `/var/lib/<stateDirectory>/storage`. A Hub started without `--storage-dir` used `~/.scion/storage`. |
 | `hubId` | null or str | `null` | `SCION_SERVER_HUB_HUBID`; required for HA. |
-| `storageBucket` | null or str | `null` | `--storage-bucket` (GCS); required for HA. Without it, the Hub uses `--storage-dir /var/lib/<stateDirectory>/storage`. |
+| `storageBucket` | null or str | `null` | `--storage-bucket` (GCS); required for HA. Cannot be combined with `storagePath`. |
 | `workingDirectory` | null or str | `null` | The default is the account's home (`~`). |
 | `requiredMountsFor` | list of str | `[ ]` | `RequiresMountsFor=` on the Hub and image units. |
 | `broker.enable` | bool | `false` | Embedded Runtime Broker (`--enable-runtime-broker`); single-node only. |
