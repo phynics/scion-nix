@@ -72,3 +72,7 @@ The module tests evaluate every mode, and CI builds the packages on all four pla
 
 [Known gaps](docs/operations.md#known-gaps) has the details.
 
+
+## License
+
+The Nix packaging, modules, workflows, and documentation in this repository are licensed under the [MIT License](LICENSE). Scion itself, and the images and binaries built from it, are licensed under [Apache-2.0](https://github.com/GoogleCloudPlatform/scion/blob/main/LICENSE).
