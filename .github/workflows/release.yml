@@ -63,10 +63,10 @@ jobs:
           set -euo pipefail
           version="$(jq -r '.version' upstream.json)"
           rev="$(jq -r '.rev' upstream.json)"
-          tag="${version}-nix.1"
+          tag="$(jq -r '.binaryRelease' upstream.json)"
           test "$(compgen -G 'dist/*.tar.gz' | wc -l)" -eq 4
           gh release create "$tag" dist/* \
             --target "$GITHUB_SHA" \
             --title "Scion $version (Nix build)" \
-            --notes "Built from upstream $rev and repository $GITHUB_SHA. See PLAN.md for service and image deployment status." \
+            --notes "Built from upstream $rev and repository $GITHUB_SHA. See README.md for the supported run modes." \
             --prerelease

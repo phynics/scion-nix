@@ -1,0 +1,69 @@
+name: Build Scion server image
+
+# Builds packages.<linux>.scion-server-image with Nix on each architecture and
+# publishes ghcr.io/phynics/scion-server as a multi-arch image.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scion-server-image
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: Build image
+        run: nix build .#scion-server-image --print-build-logs
+      - name: Push architecture tag
+        env:
+          ARCH: ${{ matrix.arch }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$(jq -r '.imageTag' upstream.json)"
+          nix shell --inputs-from . nixpkgs#skopeo --command \
+            skopeo copy --dest-creds "${{ github.actor }}:$GH_TOKEN" \
+            docker-archive:result "docker://ghcr.io/phynics/scion-server:${tag}-${ARCH}"
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create multi-arch tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$(jq -r '.imageTag' upstream.json)"
+          image=ghcr.io/phynics/scion-server
+          docker buildx imagetools create \
+            --tag "$image:$tag" --tag "$image:latest" \
+            "$image:$tag-amd64" "$image:$tag-arm64"
+          docker buildx imagetools inspect "$image:$tag" >> "$GITHUB_STEP_SUMMARY"

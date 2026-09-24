@@ -1,192 +1,336 @@
 { self }:
 { config, lib, pkgs, ... }:
 
+# Scion run modes (https://googlecloudplatform.github.io/scion/choosing-a-mode/):
+#
+#   Local               programs.google-scion                      CLI + container runtime, no server
+#   Workstation         services.scion.workstation                 combo server (Hub + Broker + Web) on loopback
+#   Single-node hosted  services.scion.hub (availability = "single-node")
+#                                                                  one networked Hub on SQLite, optional embedded Broker
+#   HA hosted           services.scion.hub (availability = "ha")   one Hub replica on Postgres + GCS
+#
+# services.scion.broker adds a standalone Runtime Broker that executes agents
+# for a Hub running elsewhere (either hosted tier). Every service runs the
+# native binary under systemd as an existing account; none runs a Scion
+# server container. Components that execute agents pull the digest-pinned
+# harness images into that account's container store first.
+
 let
-  inherit (lib) mkEnableOption mkIf mkOption types optionalAttrs;
+  inherit (lib) mkEnableOption mkIf mkMerge mkOption optionals optionalAttrs types;
+  flakePackages = self.packages.${pkgs.stdenv.hostPlatform.system};
   program = config.programs.google-scion;
-  services = config.services.scion;
-  defaultPackage = self.packages.${pkgs.stdenv.hostPlatform.system}.google-scion;
-  patchedPackage = self.packages.${pkgs.stdenv.hostPlatform.system}.google-scion-source;
-  envFile = file: optionalAttrs (file != null) { EnvironmentFile = file; };
-  runtimePath = runtime: [ pkgs.git ] ++ lib.optionals (runtime == "podman") [ pkgs.podman ]
-    ++ lib.optionals (runtime == "docker") [ pkgs.docker ];
-  podmanService = {
-    after = [ "network-online.target" "linger-users.service" ];
-    wants = [ "network-online.target" "linger-users.service" ];
-    serviceConfig = { Delegate = true; Environment = "PODMAN_SYSTEMD_UNIT=%n"; };
+  cfg = config.services.scion;
+  hub = cfg.hub;
+  isHA = hub.availability == "ha";
+  hubStateDir = "/var/lib/${hub.stateDirectory}";
+
+  runtimeType = types.enum [ "podman" "docker" ];
+  runtimePackage = runtime: if runtime == "podman" then pkgs.podman else pkgs.docker;
+
+  commonOptions = what: {
+    user = mkOption {
+      type = types.str;
+      description = "Existing account that runs ${what}. Scion keeps its settings under this account's home; the module never creates the account.";
+    };
+    environmentFile = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = "/run/secrets/scion.env";
+      description = "Runtime path to a KEY=value file readable by the service account, for example a sops-nix secret. Its contents never enter the Nix store.";
+    };
   };
-  commonService = component: extra: {
-    description = "Scion ${component}";
-    wantedBy = [ "multi-user.target" ];
+
+  agentOptions = {
+    runtime = mkOption {
+      type = runtimeType;
+      default = program.runtime;
+      defaultText = lib.literalExpression "config.programs.google-scion.runtime";
+      description = "Container runtime that executes agents.";
+    };
+    pullImages = mkOption {
+      type = types.bool;
+      default = true;
+      description = "Pull the digest-pinned harness images into the service account's container store before starting.";
+    };
+    harnesses = mkOption {
+      type = types.listOf (types.enum flakePackages.image-puller.harnessNames);
+      default = flakePackages.image-puller.harnessNames;
+      defaultText = lib.literalMD "every harness in `image-manifest.json`";
+      example = [ "claude" "opencode" ];
+      description = "Harness images to pull when `pullImages` is enabled.";
+    };
+    containersStorageConf = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      description = "Rootless Podman storage.conf path, when the account uses a non-default graphroot.";
+    };
+  };
+
+  # Rootless Podman needs the account's lingering user manager, a delegated
+  # cgroup, and PODMAN_SYSTEMD_UNIT so conmon lands in this unit's cgroup.
+  runtimeUnit = agents: optionalAttrs (agents.runtime == "podman") {
+    after = [ "linger-users.service" ];
+    wants = [ "linger-users.service" ];
+    environment = { PODMAN_SYSTEMD_UNIT = "%n"; }
+      // optionalAttrs (agents.containersStorageConf != null) {
+        CONTAINERS_STORAGE_CONF = agents.containersStorageConf;
+      };
+    serviceConfig.Delegate = true;
+  } // optionalAttrs (agents.runtime == "docker") {
+    after = [ "docker.service" ];
+    wants = [ "docker.service" ];
+  };
+
+  imagesUnitName = component: "scion-${component}-images";
+
+  imagesService = component: user: agents: mkMerge [ (runtimeUnit agents) {
+    description = "Pull pinned Scion harness images for ${user}";
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
-    environment.SCION_IMAGE_REGISTRY = program.imageRegistry;
+    path = [ (runtimePackage agents.runtime) ];
     serviceConfig = {
-      User = extra.user;
-      Restart = "on-failure";
-      RestartSec = 5;
-    } // envFile extra.environmentFile;
-  };
+      Type = "oneshot";
+      RemainAfterExit = true;
+      User = user;
+      WorkingDirectory = "~";
+      ExecStart = lib.escapeShellArgs ([
+        "${flakePackages.image-puller}/bin/scion-pull-images"
+        agents.runtime
+        program.imageRegistry
+      ] ++ agents.harnesses);
+    };
+  } ];
+
+  scionService = { component, description, user, environmentFile, agents ? null, workingDirectory ? "~", requiredMountsFor ? [ ], exec, extraEnv ? { }, extraServiceConfig ? { } }:
+    let
+      pullsImages = agents != null && agents.pullImages;
+      images = "${imagesUnitName component}.service";
+    in
+    mkMerge [ (if agents == null then { } else runtimeUnit agents) {
+      inherit description;
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network-online.target" ] ++ optionals pullsImages [ images ];
+      wants = [ "network-online.target" ];
+      requires = optionals pullsImages [ images ];
+      path = [ pkgs.git ] ++ optionals (agents != null) [ (runtimePackage agents.runtime) ];
+      unitConfig.RequiresMountsFor = requiredMountsFor;
+      environment = { SCION_IMAGE_REGISTRY = program.imageRegistry; } // extraEnv;
+      serviceConfig = {
+        User = user;
+        WorkingDirectory = workingDirectory;
+        ExecStart = lib.escapeShellArgs exec;
+        Restart = "on-failure";
+        RestartSec = 5;
+      } // optionalAttrs (environmentFile != null) { EnvironmentFile = environmentFile; }
+        // extraServiceConfig;
+    } ];
+
+  # Link ~/.scion/settings.yaml to a runtime file (for example a sops-nix
+  # template). An existing regular file is never overwritten.
+  linkSettings = settingsFile: pkgs.writeShellScript "scion-link-settings" ''
+    set -eu
+    link="$HOME/.scion/settings.yaml"
+    ${pkgs.coreutils}/bin/mkdir -p "$HOME/.scion"
+    if [ -e "$link" ] && [ ! -L "$link" ]; then
+      echo "Refusing to replace existing $link; migrate it into ${settingsFile} first." >&2
+      exit 1
+    fi
+    ${pkgs.coreutils}/bin/ln -sfn ${lib.escapeShellArg settingsFile} "$link"
+  '';
+
+  hubExec = [ "${hub.package}/bin/scion" "server" "start" "--foreground" "--hosted" "--enable-hub" "--host" hub.listenAddress ]
+    ++ (if hub.enableWeb
+      then [ "--enable-web" "--web-port" (toString hub.port) ]
+      else [ "--port" (toString hub.port) ])
+    ++ optionals hub.broker.enable ([ "--enable-runtime-broker" "--runtime-broker-port" (toString hub.broker.port) ]
+      ++ optionals hub.broker.autoProvide [ "--auto-provide" ])
+    ++ optionals (!isHA) [ "--db" (if hub.databasePath != null then hub.databasePath else "${hubStateDir}/hub.db") ]
+    ++ (if hub.storageBucket != null
+      then [ "--storage-bucket" hub.storageBucket ]
+      else [ "--storage-dir" "${hubStateDir}/storage" ])
+    ++ lib.concatMap (email: [ "--admin-emails" email ]) hub.adminEmails;
 in
 {
+  imports = [
+    (lib.mkRemovedOptionModule [ "services" "scion" "hosted" ] ''
+      services.scion.hosted was folded into services.scion.hub. For the same
+      single-process Hub + Web + Broker, set services.scion.hub.enable,
+      services.scion.hub.broker.enable, and move user, listenAddress, port,
+      publicURL, settingsFile, environmentFile, databasePath, workingDirectory
+      and requiredMountsFor under services.scion.hub; brokerPort becomes
+      hub.broker.port, pullImages and containersStorageConf move under
+      hub.broker, and imageRegistry is programs.google-scion.imageRegistry.
+      Set hub.databasePath to keep an existing SQLite database; the new
+      default lives in /var/lib/<stateDirectory>.
+    '')
+  ];
+
   options = {
     programs.google-scion = {
-      enable = mkEnableOption "the Scion command line interface";
-      package = mkOption { type = types.package; default = defaultPackage; description = "Native Scion binary used by the CLI and services."; };
-      runtime = mkOption { type = types.enum [ "podman" "docker" ]; default = "podman"; description = "Container runtime used by a workstation or broker."; };
-      imageRegistry = mkOption { type = types.str; default = "ghcr.io/phynics"; description = "Registry prefix for standard Scion agent images."; };
+      enable = mkEnableOption "the Scion CLI for Local mode (agents started directly with `scion start`, no server)";
+      package = mkOption {
+        type = types.package;
+        default = flakePackages.google-scion;
+        defaultText = lib.literalExpression "scion-nix.packages.\${system}.google-scion";
+        description = "Scion binary for the CLI, the workstation, and the standalone Broker.";
+      };
+      runtime = mkOption {
+        type = runtimeType;
+        default = "podman";
+        description = "Container runtime for agents. Enabling the CLI also enables this runtime on the host.";
+      };
+      imageRegistry = mkOption {
+        type = types.str;
+        default = "ghcr.io/phynics";
+        example = "localhost/scion";
+        description = "Registry prefix Scion uses for standard harness images (SCION_IMAGE_REGISTRY). Pulled images are tagged under it.";
+      };
     };
+
     services.scion = {
-      workstation = {
-        enable = mkEnableOption "the native Scion workstation server";
-        user = mkOption { type = types.str; description = "Existing account that owns Scion state and the container runtime."; };
+      workstation = commonOptions "the workstation combo server" // agentOptions // {
+        enable = mkEnableOption "Workstation mode: Hub, Runtime Broker and Web in one loopback server";
         listenAddress = mkOption { type = types.str; default = "127.0.0.1"; };
-        port = mkOption { type = types.port; default = 8080; };
-        environmentFile = mkOption { type = types.nullOr types.str; default = null; description = "Runtime path to a service-readable environment file."; };
+        port = mkOption { type = types.port; default = 8080; description = "Web dashboard and Hub API port."; };
       };
-      hub = {
-        enable = mkEnableOption "the native Scion Hub and web server";
-        user = mkOption { type = types.str; description = "Existing account that runs the Hub."; };
-        stateDirectory = mkOption { type = types.str; default = "scion-hub"; description = "Relative systemd StateDirectory name for Hub data."; };
+
+      hub = commonOptions "the Hub" // {
+        enable = mkEnableOption "a hosted Scion Hub (Single-node or HA hosted mode)";
+        availability = mkOption {
+          type = types.enum [ "single-node" "ha" ];
+          default = "single-node";
+          description = ''
+            Availability tier. `single-node` keeps state in SQLite and local
+            storage under the systemd StateDirectory. `ha` runs one replica of a
+            load-balanced Hub on Postgres and GCS: put SCION_SERVER_DATABASE_URL
+            and SCION_SERVER_SESSION_SECRET in `environmentFile`, and set
+            `hubId` and `storageBucket` identically on every replica.
+          '';
+        };
+        package = mkOption {
+          type = types.package;
+          default = flakePackages.google-scion-source;
+          defaultText = lib.literalExpression "scion-nix.packages.\${system}.google-scion-source";
+          description = "Scion build for the Hub. The default source build carries the Hub fixes in nix/package.nix.";
+        };
         listenAddress = mkOption { type = types.str; default = "127.0.0.1"; };
-        port = mkOption { type = types.port; default = 8080; };
-        environmentFile = mkOption { type = types.nullOr types.str; default = null; };
+        port = mkOption { type = types.port; default = 8080; description = "Web port, or the Hub API port when `enableWeb` is off."; };
+        enableWeb = mkOption { type = types.bool; default = true; description = "Serve the web dashboard; the Hub API shares its port."; };
+        publicURL = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          example = "https://scion.example.com";
+          description = "Browser-visible URL (SCION_SERVER_BASE_URL). OAuth and OIDC callbacks use it.";
+        };
+        adminEmails = mkOption { type = types.listOf types.str; default = [ ]; description = "Accounts promoted to Hub admin on login."; };
+        settingsFile = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = "Runtime settings.yaml (for example a sops-nix template) linked to ~/.scion/settings.yaml. Use it for OAuth/OIDC client secrets.";
+        };
+        stateDirectory = mkOption { type = types.str; default = "scion-hub"; description = "systemd StateDirectory name, under /var/lib."; };
+        databasePath = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = "Single-node SQLite database path. Defaults to hub.db in the state directory.";
+        };
+        hubId = mkOption { type = types.nullOr types.str; default = null; description = "Stable Hub ID shared by every HA replica."; };
+        storageBucket = mkOption { type = types.nullOr types.str; default = null; description = "GCS bucket for templates and artifacts; required for HA, optional for single-node (default: local storage in the state directory)."; };
+        workingDirectory = mkOption { type = types.nullOr types.str; default = null; description = "Process working directory; defaults to the account's home."; };
+        requiredMountsFor = mkOption { type = types.listOf types.str; default = [ ]; description = "Paths that must be mounted before the Hub and image pulling start."; };
+        broker = agentOptions // {
+          enable = mkEnableOption "a Runtime Broker inside the Hub process, so this node also runs agents (Single-node only)";
+          port = mkOption { type = types.port; default = 9800; };
+          autoProvide = mkOption { type = types.bool; default = true; description = "Offer this broker to new projects automatically."; };
+        };
       };
-      broker = {
-        enable = mkEnableOption "the native Scion Runtime Broker";
-        user = mkOption { type = types.str; description = "Existing account that owns Broker state and the container runtime."; };
-        runtime = mkOption { type = types.enum [ "podman" "docker" ]; default = program.runtime; };
-        environmentFile = mkOption { type = types.nullOr types.str; default = null; };
-      };
-      hosted = {
-        enable = mkEnableOption "a hosted Hub, Web, and embedded Runtime Broker in one native process";
-        user = mkOption { type = types.str; description = "Existing account that owns Scion state and rootless Podman."; };
-        home = mkOption { type = types.str; description = "Home directory of the existing account."; };
-        package = mkOption { type = types.package; default = patchedPackage; description = "Scion build with broker read and default profile fixes."; };
-        listenAddress = mkOption { type = types.str; default = "127.0.0.1"; };
-        port = mkOption { type = types.port; default = 8080; };
-        publicURL = mkOption { type = types.nullOr types.str; default = null; description = "Browser-visible Hub URL used for OIDC callbacks."; };
-        brokerPort = mkOption { type = types.port; default = 9800; };
-        databasePath = mkOption { type = types.nullOr types.str; default = null; description = "Existing or new SQLite Hub database path."; };
-        workingDirectory = mkOption { type = types.nullOr types.str; default = null; description = "Working directory for the Scion process."; };
-        requiredMountsFor = mkOption { type = types.listOf types.str; default = [ ]; description = "Paths that must be mounted before Scion and image pulling start."; };
-        imageRegistry = mkOption { type = types.str; default = "ghcr.io/phynics"; description = "Tag prefix for pulled harness images and Scion's image_registry."; };
-        pullImages = mkOption { type = types.bool; default = true; description = "Pull digest-pinned harness images into the service account's Podman store before starting."; };
-        settingsFile = mkOption { type = types.str; description = "Runtime YAML settings path, usually a sops-nix template path. Must include OIDC client_secret."; };
-        environmentFile = mkOption { type = types.str; description = "Runtime environment file containing SCION_SERVER_SESSION_SECRET."; };
-        containersStorageConf = mkOption { type = types.nullOr types.str; default = null; description = "Rootless containers storage.conf path."; };
+
+      broker = commonOptions "the Runtime Broker" // agentOptions // {
+        enable = mkEnableOption "a standalone Runtime Broker that runs agents for a Hub elsewhere";
+        port = mkOption { type = types.port; default = 9800; description = "Broker API port. A standalone hosted broker binds to loopback and dials the Hub itself."; };
       };
     };
   };
 
-  config = lib.mkMerge [
+  config = mkMerge [
+    {
+      assertions = [
+        { assertion = !(cfg.workstation.enable && (hub.enable || cfg.broker.enable)); message = "services.scion.workstation already runs a Hub and Broker; do not enable services.scion.hub or services.scion.broker beside it."; }
+        { assertion = !(hub.enable && hub.broker.enable && cfg.broker.enable); message = "Enable either services.scion.hub.broker or services.scion.broker on one host, not both."; }
+        { assertion = builtins.match "[a-zA-Z0-9_-]+" hub.stateDirectory != null; message = "services.scion.hub.stateDirectory must be a single relative directory name."; }
+        { assertion = !(hub.enable && isHA) || (hub.hubId != null && hub.storageBucket != null); message = "HA hosted mode needs services.scion.hub.hubId and services.scion.hub.storageBucket."; }
+        { assertion = !(hub.enable && isHA) || hub.environmentFile != null; message = "HA hosted mode needs services.scion.hub.environmentFile with SCION_SERVER_DATABASE_URL and SCION_SERVER_SESSION_SECRET."; }
+        { assertion = !(hub.enable && isHA) || !hub.broker.enable; message = "HA Hub replicas do not embed a Runtime Broker; run services.scion.broker on separate nodes."; }
+        { assertion = !(hub.enable && isHA) || hub.databasePath == null; message = "services.scion.hub.databasePath applies to SQLite; set SCION_SERVER_DATABASE_URL in the environment file for HA."; }
+      ];
+    }
+
+    # Local mode: CLI plus the container runtime its agents need.
     (mkIf program.enable {
       environment.systemPackages = [ program.package pkgs.git ];
       environment.sessionVariables.SCION_IMAGE_REGISTRY = program.imageRegistry;
+      virtualisation.podman.enable = lib.mkIf (program.runtime == "podman") (lib.mkDefault true);
+      virtualisation.docker.enable = lib.mkIf (program.runtime == "docker") (lib.mkDefault true);
     })
-    {
-      assertions = [
-        { assertion = !(services.workstation.enable && (services.hub.enable || services.broker.enable || services.hosted.enable)); message = "Scion workstation cannot run beside another Scion service on this host."; }
-        { assertion = !services.hosted.enable || !(services.hub.enable || services.broker.enable); message = "Scion hosted combined service cannot run beside a standalone Hub or Broker."; }
-        { assertion = !services.hub.enable || builtins.match "[a-zA-Z0-9_-]+" services.hub.stateDirectory != null; message = "Scion Hub stateDirectory must be a single relative directory name."; }
-      ];
-    }
-    (mkIf (services.workstation.enable || services.broker.enable || services.hosted.enable) {
-      virtualisation.podman.enable = lib.mkDefault (
-        (services.workstation.enable && program.runtime == "podman")
-        || (services.broker.enable && services.broker.runtime == "podman")
-        || services.hosted.enable
-      );
+
+    # Any component that executes agents needs its runtime on the host.
+    (let
+      runtimes = optionals cfg.workstation.enable [ cfg.workstation.runtime ]
+        ++ optionals (hub.enable && hub.broker.enable) [ hub.broker.runtime ]
+        ++ optionals cfg.broker.enable [ cfg.broker.runtime ];
+    in {
+      virtualisation.podman.enable = mkIf (builtins.elem "podman" runtimes) (lib.mkDefault true);
+      virtualisation.docker.enable = mkIf (builtins.elem "docker" runtimes) (lib.mkDefault true);
     })
-    (mkIf services.workstation.enable {
-      systemd.services.scion-workstation = lib.recursiveUpdate ((commonService "workstation" services.workstation) // {
-        path = runtimePath program.runtime;
-        serviceConfig = (commonService "workstation" services.workstation).serviceConfig // {
-          ExecStart = "${program.package}/bin/scion server start --foreground --enable-hub --enable-runtime-broker --enable-web --host ${services.workstation.listenAddress} --web-port ${toString services.workstation.port}";
+
+    (mkIf cfg.workstation.enable (let ws = cfg.workstation; in {
+      systemd.services.scion-workstation = scionService {
+        component = "workstation";
+        description = "Scion workstation (Hub, Runtime Broker and Web)";
+        inherit (ws) user environmentFile;
+        agents = ws;
+        # No --hosted: workstation defaults enable every component, dev auth
+        # and auto-provide.
+        exec = [ "${program.package}/bin/scion" "server" "start" "--foreground" "--host" ws.listenAddress "--web-port" (toString ws.port) ];
+      };
+      systemd.services.${imagesUnitName "workstation"} = mkIf ws.pullImages (imagesService "workstation" ws.user ws);
+    }))
+
+    (mkIf hub.enable {
+      systemd.services.scion-hub = scionService {
+        component = "hub";
+        description = "Scion Hub (${hub.availability} hosted)";
+        inherit (hub) user environmentFile requiredMountsFor;
+        agents = if hub.broker.enable then hub.broker else null;
+        workingDirectory = if hub.workingDirectory == null then "~" else hub.workingDirectory;
+        exec = hubExec;
+        extraEnv = {
+          SCION_SERVER_DATABASE_DRIVER = if isHA then "postgres" else "sqlite";
+        } // optionalAttrs (hub.publicURL != null) {
+          SCION_SERVER_BASE_URL = hub.publicURL;
+        } // optionalAttrs (hub.hubId != null) {
+          SCION_SERVER_HUB_HUBID = hub.hubId;
         };
-      }) (lib.optionalAttrs (program.runtime == "podman") podmanService);
-    })
-    (mkIf services.hub.enable {
-      systemd.services.scion-hub = (commonService "Hub" services.hub) // {
-        path = [ pkgs.git ];
-        environment = (commonService "Hub" services.hub).environment // {
-          SCION_SERVER_DATABASE_URL = "/var/lib/${services.hub.stateDirectory}/hub.db";
-          SCION_SERVER_STORAGE_LOCAL_PATH = "/var/lib/${services.hub.stateDirectory}/storage";
-        };
-        serviceConfig = (commonService "Hub" services.hub).serviceConfig // {
-          StateDirectory = services.hub.stateDirectory;
-          ExecStart = "${program.package}/bin/scion server start --foreground --hosted --enable-hub --enable-web --host ${services.hub.listenAddress} --web-port ${toString services.hub.port}";
+        extraServiceConfig = {
+          StateDirectory = hub.stateDirectory;
+          StateDirectoryMode = "0700";
+        } // optionalAttrs (hub.settingsFile != null) {
+          ExecStartPre = linkSettings hub.settingsFile;
         };
       };
+      systemd.services.${imagesUnitName "hub"} = mkIf (hub.broker.enable && hub.broker.pullImages)
+        (mkMerge [ (imagesService "hub" hub.user hub.broker) { unitConfig.RequiresMountsFor = hub.requiredMountsFor; } ]);
     })
-    (mkIf services.broker.enable {
-      systemd.services.scion-broker = lib.recursiveUpdate ((commonService "Broker" services.broker) // {
-        path = runtimePath services.broker.runtime;
-        serviceConfig = (commonService "Broker" services.broker).serviceConfig // {
-          ExecStart = "${program.package}/bin/scion server start --foreground --hosted --enable-runtime-broker";
-        };
-      }) (lib.optionalAttrs (services.broker.runtime == "podman") podmanService);
-    })
-    (mkIf services.hosted.enable (
-      let
-        hosted = services.hosted;
-        settingsLink = "${hosted.home}/.scion/settings.yaml";
-        storageEnv = optionalAttrs (hosted.containersStorageConf != null) {
-          CONTAINERS_STORAGE_CONF = hosted.containersStorageConf;
-        };
-        prepareSettings = pkgs.writeShellScript "scion-prepare-settings" ''
-          set -eu
-          ${pkgs.coreutils}/bin/mkdir -p ${lib.escapeShellArg "${hosted.home}/.scion"}
-          if [ -e ${lib.escapeShellArg settingsLink} ] && [ ! -L ${lib.escapeShellArg settingsLink} ]; then
-            echo "Existing Scion settings must be migrated before enabling hosted mode: ${settingsLink}" >&2
-            exit 1
-          fi
-          ${pkgs.coreutils}/bin/ln -sfn ${lib.escapeShellArg hosted.settingsFile} ${lib.escapeShellArg settingsLink}
-        '';
-      in {
-        systemd.services.scion-images = mkIf hosted.pullImages {
-          description = "Pull pinned Scion images for ${hosted.user}";
-          after = [ "network-online.target" "linger-users.service" ];
-          wants = [ "network-online.target" "linger-users.service" ];
-          path = [ pkgs.podman ];
-          unitConfig.RequiresMountsFor = hosted.requiredMountsFor;
-          environment = { HOME = hosted.home; } // storageEnv;
-          serviceConfig = {
-            Type = "oneshot";
-            User = hosted.user;
-            Delegate = true;
-            Environment = "PODMAN_SYSTEMD_UNIT=%n";
-            RemainAfterExit = true;
-            ExecStart = "${self.packages.${pkgs.stdenv.hostPlatform.system}.image-puller}/bin/scion-pull-images podman ${lib.escapeShellArg hosted.imageRegistry}";
-          };
-        };
-        systemd.services.scion-hosted = {
-          description = "Scion hosted Hub, Web, and Runtime Broker";
-          wantedBy = [ "multi-user.target" ];
-          after = [ "network-online.target" "linger-users.service" ] ++ lib.optionals hosted.pullImages [ "scion-images.service" ];
-          wants = [ "network-online.target" "linger-users.service" ];
-          requires = lib.optionals hosted.pullImages [ "scion-images.service" ];
-          path = runtimePath "podman";
-          unitConfig.RequiresMountsFor = hosted.requiredMountsFor;
-          environment = {
-            HOME = hosted.home;
-            SCION_IMAGE_REGISTRY = hosted.imageRegistry;
-          } // storageEnv // optionalAttrs (hosted.publicURL != null) {
-            SCION_SERVER_BASE_URL = hosted.publicURL;
-          };
-          serviceConfig = {
-            User = hosted.user;
-            WorkingDirectory = if hosted.workingDirectory == null then hosted.home else hosted.workingDirectory;
-            Delegate = true;
-            Environment = "PODMAN_SYSTEMD_UNIT=%n";
-            EnvironmentFile = hosted.environmentFile;
-            ExecStartPre = prepareSettings;
-            ExecStart = "${hosted.package}/bin/scion server start --foreground --hosted --enable-hub --enable-web --enable-runtime-broker --host ${lib.escapeShellArg hosted.listenAddress} --web-port ${toString hosted.port} --runtime-broker-port ${toString hosted.brokerPort}${lib.optionalString (hosted.databasePath != null) " --db ${lib.escapeShellArg hosted.databasePath}"}";
-            Restart = "on-failure";
-            RestartSec = 5;
-          };
-        };
-      }
-    ))
+
+    (mkIf cfg.broker.enable (let broker = cfg.broker; in {
+      systemd.services.scion-broker = scionService {
+        component = "broker";
+        description = "Scion Runtime Broker";
+        inherit (broker) user environmentFile;
+        agents = broker;
+        exec = [ "${program.package}/bin/scion" "server" "start" "--foreground" "--hosted" "--enable-runtime-broker" "--runtime-broker-port" (toString broker.port) ];
+      };
+      systemd.services.${imagesUnitName "broker"} = mkIf broker.pullImages (imagesService "broker" broker.user broker);
+    }))
   ];
 }

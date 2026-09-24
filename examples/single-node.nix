@@ -1,5 +1,10 @@
-# Import this alongside the scion-nix and sops-nix NixOS modules.
-# Supply sops.defaultSopsFile and replace the example OIDC values.
+# Single-node hosted: one networked Hub on SQLite, with an embedded Runtime
+# Broker that runs agents in the service account's rootless Podman.
+#
+# Import this alongside the scion-nix and sops-nix NixOS modules, supply
+# sops.defaultSopsFile, and replace the example OIDC values. Define the
+# `scion` account (with a home, subuid/subgid ranges, and linger) and the
+# firewall rules in the host configuration.
 { config, ... }:
 {
   sops.secrets.scion-oidc-client-secret = { };
@@ -23,8 +28,6 @@
         mode: hosted
         hub:
           public_url: http://hub.example.test:8080
-          admin_emails:
-            - admin@example.test
         broker:
           host: 127.0.0.1
           port: 9800
@@ -45,30 +48,32 @@
     '';
   };
 
+  # image_registry above must match the prefix the harness images are tagged with.
   programs.google-scion = {
     enable = true;
-    package = config.services.scion.hosted.package;
+    package = config.services.scion.hub.package;
     imageRegistry = "localhost/scion";
   };
 
-  services.scion.hosted = {
+  services.scion.hub = {
     enable = true;
+    availability = "single-node";
     user = "scion";
-    home = "/home/scion";
     listenAddress = "0.0.0.0";
     port = 8080;
-    brokerPort = 9800;
     publicURL = "http://hub.example.test:8080";
-    imageRegistry = "localhost/scion";
+    adminEmails = [ "admin@example.test" ];
     settingsFile = config.sops.templates."scion-settings.yaml".path;
     environmentFile = config.sops.templates."scion-session.env".path;
+    broker = {
+      enable = true;
+      port = 9800;
+      harnesses = [ "opencode" "claude" ];
+    };
   };
 
-  systemd.services.scion-hosted = {
+  systemd.services.scion-hub = {
     after = [ "sops-nix.service" ];
     requires = [ "sops-nix.service" ];
   };
-
-  # Define the service account, firewall rules, and any custom storage or
-  # workspace mounts in the host configuration.
 }
