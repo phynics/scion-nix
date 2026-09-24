@@ -4,14 +4,14 @@
 
 | Output | Systems | Description |
 |---|---|---|
-| `packages.<system>.google-scion` (also `default`) | all four | Prebuilt `scion` from the `binaryRelease` GitHub release, fetched by a fixed SHA-256. No Go or Node build. |
-| `packages.<system>.google-scion-source` | all four | Source build of the pinned revision, with the web UI embedded and the Hub fixes applied. |
+| `packages.<system>.google-scion` (also `default`) | all four | Upstream's own release binary for the pinned version, fetched by the hash in `sources.json`. No Go or Node build. |
+| `packages.<system>.google-scion-source` | all four | Source build of the pinned revision, with the web UI embedded and the Hub fixes applied. `passthru.web.npmDeps` and `goModules` are the fixed-output derivations the update script uses to recompute hashes. |
 | `packages.<system>.scion-server-image` | Linux | Server OCI image, as a `docker-archive` tarball. See [images.md](images.md#server-image). |
 | `packages.<system>.image-puller` | all four | The `scion-pull-images` script. `passthru.harnessNames` lists the harnesses it can pull. |
 | `apps.<system>.pull-images` | all four | Runs the image puller. |
 | `nixosModules.default` | — | NixOS module: every mode. |
 | `darwinModules.default` | — | nix-darwin module: Local and Workstation. |
-| `checks.<system>.*` | all four | Package builds, image-puller behavior, module evaluation tests, and the server image on Linux. |
+| `checks.<system>.*` | all four | Package builds, image-puller behavior, module evaluation tests, update-script unit tests, and the server image on Linux. |
 
 ### Hub fixes in `google-scion-source`
 
@@ -135,7 +135,8 @@ Units that use Docker are ordered after `docker.service`.
 
 | File | Purpose |
 |---|---|
-| [upstream.json](../upstream.json) | Pinned Scion `version`, `rev`, harness `imageTag`, and native `binaryRelease`. |
-| [image-manifest.json](../image-manifest.json) | Per-platform image digests, produced by the images workflow. |
+| [sources.json](../sources.json) | The single Scion pin: `channel`, `version`, `rev`, source `hash`, `npmDepsHash`, `vendorHash`, harness `imageTag`, and per-platform `binaries` hashes. Rewritten by `scripts/update.py`. |
+| [scripts/update.py](../scripts/update.py) | Finds the newest upstream release on the channel and rewrites `sources.json`. See [Updating Scion](operations.md#updating-scion). |
+| [image-manifest.json](../image-manifest.json) | Per-platform image digests, produced by the images workflow. Its `upstreamRev` and `tag` must match `sources.json`. |
 | [patches/](../patches) | Patches the images workflow applies to upstream before it builds the images. |
 | [examples/](../examples) | Single-node and HA NixOS configurations; evaluated by the tests. |

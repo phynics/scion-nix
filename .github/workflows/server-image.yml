@@ -1,10 +1,12 @@
 name: Build Scion server image
 
 # Builds packages.<linux>.scion-server-image with Nix on each architecture and
-# publishes ghcr.io/phynics/scion-server as a multi-arch image.
+# publishes ghcr.io/phynics/scion-server as a multi-arch image. publish.yml
+# calls it after every merge that changes sources.json.
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -39,7 +41,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag="$(jq -r '.imageTag' upstream.json)"
+          tag="$(jq -r '.imageTag' sources.json)"
           nix shell --inputs-from . nixpkgs#skopeo --command \
             skopeo copy --dest-creds "${{ github.actor }}:$GH_TOKEN" \
             docker-archive:result "docker://ghcr.io/phynics/scion-server:${tag}-${ARCH}"
@@ -61,7 +63,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag="$(jq -r '.imageTag' upstream.json)"
+          tag="$(jq -r '.imageTag' sources.json)"
           image=ghcr.io/phynics/scion-server
           docker buildx imagetools create \
             --tag "$image:$tag" --tag "$image:latest" \

@@ -1,12 +1,22 @@
-{ lib, buildGoModule, buildNpmPackage, go, nodejs, src, version, rev }:
+# Scion built from the pinned source in sources.json: the npm web client first,
+# then the Go binary with those assets embedded. scripts/update.py recomputes
+# vendorHash and npmDepsHash through passthru.web.npmDeps and goModules.
+{ lib, buildGoModule, buildNpmPackage, fetchFromGitHub, nodejs, sources }:
 
 let
+  inherit (sources) version rev;
+  src = fetchFromGitHub {
+    owner = "GoogleCloudPlatform";
+    repo = "scion";
+    inherit rev;
+    inherit (sources) hash;
+  };
   web = buildNpmPackage {
     pname = "scion-web";
     inherit version;
     src = src + "/web";
     nodejs = nodejs;
-    npmDepsHash = "sha256-BW2mAZSK2alZMQNpUOlCosTWqAkYwycSaNAfLD8LlyQ=";
+    inherit (sources) npmDepsHash;
     npmBuildScript = "build";
     installPhase = ''
       runHook preInstall
@@ -19,7 +29,7 @@ in
 buildGoModule {
   pname = "google-scion";
   inherit version src;
-  vendorHash = "sha256-8FwhN7R4FSn/nIyxXmK8elqM1Ty72ws+pBDv0H/czXU=";
+  inherit (sources) vendorHash;
   postPatch = ''
     # The pinned handler checks a resource name that has no registered read grant.
     substituteInPlace pkg/hub/handlers_runtime_brokers.go \
@@ -43,6 +53,7 @@ buildGoModule {
     cp -r ${web}/dist/client/. web/dist/client/
   '';
   doCheck = false;
+  passthru = { inherit web src; };
   meta = {
     description = "Scion CLI, Hub, Broker and embedded web dashboard";
     homepage = "https://github.com/GoogleCloudPlatform/scion";

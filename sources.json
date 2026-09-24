@@ -1,0 +1,15 @@
+{
+  "channel": "preview",
+  "version": "v0.3.0-preview.3",
+  "rev": "253ba544c21255121d4059638c9b5c74b56ee42e",
+  "hash": "sha256-MY/El6R98WQleC+jLKaK8Ml0pT7fSzUzkbJLaw1dmh8=",
+  "vendorHash": "sha256-8FwhN7R4FSn/nIyxXmK8elqM1Ty72ws+pBDv0H/czXU=",
+  "npmDepsHash": "sha256-BW2mAZSK2alZMQNpUOlCosTWqAkYwycSaNAfLD8LlyQ=",
+  "imageTag": "scion-v0.3.0-preview.3",
+  "binaries": {
+    "x86_64-linux": "sha256-sLO12FOk2zeriemkr2BW9IgHlIOIJSoY4Z6ep2jFB8Q=",
+    "aarch64-linux": "sha256-DxH88Dcb02srn3k3gmgdlTWD1ibrLeT3670FLVd3+I0=",
+    "x86_64-darwin": "sha256-goIJY3apD0YLEy3tfmWNcbODD9WUDVgEShNBMsrhQ8I=",
+    "aarch64-darwin": "sha256-cp0PHhKCqNbB6xOtSHXfI7KbFs/i1A7O/woerbrtgls="
+  }
+}

@@ -1,5 +1,13 @@
 name: Build Scion images
 
+# Builds upstream's harness, base and Hub images for linux/amd64 and
+# linux/arm64 from one Scion commit, pushes them as :<tag>, and uploads an
+# image-manifest.json artifact with each platform's digest.
+#
+# Manual runs build the rev in sources.json. update.yml calls this workflow
+# with the rev of a new upstream release before its sources.json is merged.
+# The mutable :latest tags only move after merge, in publish.yml.
+
 on:
   workflow_dispatch:
     inputs:
@@ -9,13 +17,22 @@ on:
         required: true
         default: all
         options: [all, scion-muse-code, scion-opencode, scion-hub, verify]
+  workflow_call:
+    inputs:
+      rev:
+        description: "Upstream Scion commit"
+        type: string
+        required: true
+      tag:
+        description: "Image tag, e.g. scion-v0.3.0-preview.4"
+        type: string
+        required: true
+      target:
+        type: string
+        default: all
 
 permissions:
   contents: read
-
-concurrency:
-  group: scion-images
-  cancel-in-progress: false
 
 jobs:
   build:
@@ -23,16 +40,22 @@ jobs:
     permissions:
       contents: read
       packages: write
+    concurrency:
+      group: scion-images-${{ inputs.tag || 'sources' }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
-      - name: Read pinned upstream revision
+      - name: Resolve upstream revision
         id: pin
         shell: bash
+        env:
+          INPUT_REV: ${{ inputs.rev }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          rev="$(jq -r '.rev' upstream.json)"
-          tag="$(jq -r '.imageTag' upstream.json)"
-          [[ "$rev" =~ ^[0-9a-f]{40}$ ]] || exit 1
-          [[ "$tag" =~ ^[a-zA-Z0-9_.-]+$ ]] || exit 1
+          rev="${INPUT_REV:-$(jq -r '.rev' sources.json)}"
+          tag="${INPUT_TAG:-$(jq -r '.imageTag' sources.json)}"
+          [[ "$rev" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid rev: $rev"; exit 1; }
+          [[ "$tag" =~ ^[a-zA-Z0-9_.-]+$ ]] || { echo "invalid tag: $tag"; exit 1; }
           echo "rev=$rev" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
@@ -48,17 +71,24 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Apply pinned upstream build fix
+      - name: Apply build patches
         working-directory: upstream
+        shell: bash
         run: |
-          patch -p1 < ../patches/muse-code-bash.patch
-          patch -p1 < ../patches/individual-image-targets.patch
+          set -euo pipefail
+          for patch in ../patches/*.patch; do
+            if patch -p1 --dry-run --silent --reverse < "$patch" > /dev/null 2>&1; then
+              echo "::notice::$(basename "$patch") is already in upstream; skipping"
+            else
+              patch -p1 --forward < "$patch"
+            fi
+          done
       - name: Build and push both Linux architectures
         if: inputs.target != 'verify'
         working-directory: upstream
         env:
           IMAGE_TAG: ${{ steps.pin.outputs.tag }}
-          TARGET: ${{ inputs.target }}
+          TARGET: ${{ inputs.target || 'all' }}
         run: |
           image-build/scripts/build-images.sh \
             --target "$TARGET" \
@@ -66,11 +96,12 @@ jobs:
             --registry ghcr.io/phynics \
             --tag "$IMAGE_TAG" \
             --push
-      - name: Inspect published image manifests
-        if: inputs.target == 'all' || inputs.target == 'verify'
+      - name: Record per-platform digests
+        if: inputs.target == 'all' || inputs.target == 'verify' || inputs.target == ''
         working-directory: upstream
         env:
           IMAGE_TAG: ${{ steps.pin.outputs.tag }}
+          REV: ${{ steps.pin.outputs.rev }}
         shell: bash
         run: |
           set -euo pipefail
@@ -86,24 +117,21 @@ jobs:
               jq -e --arg arch "$arch" \
                 '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch)] | length == 1' \
                 <<< "$manifest" > /dev/null
-              arch_digest="$(jq -r --arg arch "$arch" \
+              digest="$(jq -r --arg arch "$arch" \
                 '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest' \
                 <<< "$manifest")"
-              jq -n --arg name "$image" --arg arch "$arch" --arg digest "$arch_digest" \
+              jq -n --arg name "$image" --arg arch "$arch" --arg digest "$digest" \
                 '{name: $name, platform: ("linux/" + $arch), digest: $digest}' \
                 >> "$RUNNER_TEMP/images.jsonl"
             done
-            digest="$(docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}')"
-            echo "$ref  $digest" >> "$GITHUB_STEP_SUMMARY"
-            docker buildx imagetools create \
-              --tag "ghcr.io/phynics/$image:latest" \
-              "$ref"
+            echo "$ref  $(docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}')" >> "$GITHUB_STEP_SUMMARY"
           done
-          jq -s --arg rev '${{ steps.pin.outputs.rev }}' --arg tag "$IMAGE_TAG" \
+          jq -s --arg rev "$REV" --arg tag "$IMAGE_TAG" \
             '{upstreamRev: $rev, tag: $tag, images: .}' \
             "$RUNNER_TEMP/images.jsonl" > "$RUNNER_TEMP/image-manifest.json"
       - uses: actions/upload-artifact@v4
-        if: inputs.target == 'all' || inputs.target == 'verify'
+        if: inputs.target == 'all' || inputs.target == 'verify' || inputs.target == ''
         with:
           name: image-manifest
           path: ${{ runner.temp }}/image-manifest.json
+          if-no-files-found: error

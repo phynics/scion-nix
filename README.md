@@ -2,7 +2,9 @@
 
 Nix packages, container images, and NixOS/nix-darwin modules for [Scion](https://googlecloudplatform.github.io/scion/overview/). The modules cover each of Scion's [run modes](https://googlecloudplatform.github.io/scion/choosing-a-mode/).
 
-The flake pins Scion `v0.3.0-preview.3` (commit `253ba544`, recorded in [upstream.json](upstream.json)). The agent images in [image-manifest.json](image-manifest.json) are built from the same commit and pinned by digest.
+The flake pins Scion `v0.3.0-preview.3` (commit `253ba544`) in [sources.json](sources.json). The agent images in [image-manifest.json](image-manifest.json) are built from the same commit and pinned by digest.
+
+New upstream releases arrive automatically. A daily workflow rewrites the pin, builds the new images, and opens an update PR. Each merged pin is tagged `<version>-nix.<N>`, so you can pin or roll back with `github:phynics/scion-nix/<tag>`. See [Updating Scion](docs/operations.md#updating-scion).
 
 ## Modes at a glance
 
@@ -44,7 +46,7 @@ For example, a NixOS workstation:
 
 ## What the flake provides
 
-- **`google-scion`** (the default package): a prebuilt binary for x86_64/aarch64 Linux and macOS.
+- **`google-scion`** (the default package): upstream's release binary for x86_64/aarch64 Linux and macOS.
 - **`google-scion-source`**: the same binary built from source, including the Hub fixes.
 - **Agent harness images**: built from upstream's Dockerfiles for amd64 and arm64. They are pulled by digest, either by the `pull-images` app or by the services that run agents.
 - **`scion-server-image`**: a Nix-built OCI image that runs the Hub and web dashboard in a container.
@@ -56,7 +58,7 @@ For example, a NixOS workstation:
 |---|---|
 | Choosing and deploying a mode | [docs/modes.md](docs/modes.md) |
 | Agent images, the pull app, the server image | [docs/images.md](docs/images.md) |
-| Secrets, deployment checks, migrating from `services.scion.hosted`, upgrading, CI | [docs/operations.md](docs/operations.md) |
+| Secrets, deployment checks, migrating from `services.scion.hosted`, updating Scion, CI | [docs/operations.md](docs/operations.md) |
 | Every option, output, and systemd unit | [docs/reference.md](docs/reference.md) |
 | Contributors and coding agents | [AGENTS.md](AGENTS.md) |
 | Complete configurations | [examples/single-node.nix](examples/single-node.nix), [examples/ha-hub.nix](examples/ha-hub.nix) |

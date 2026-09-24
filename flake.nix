@@ -7,35 +7,31 @@
       url = "github:nix-darwin/nix-darwin/nix-darwin-26.05";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    scion-src = {
-      url = "github:GoogleCloudPlatform/scion/253ba544c21255121d4059638c9b5c74b56ee42e";
-      flake = false;
-    };
   };
 
-  outputs = { self, nixpkgs, scion-src, nix-darwin }:
+  outputs = { self, nixpkgs, nix-darwin }:
     let
       inherit (nixpkgs) lib;
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
       forSystems = f: lib.genAttrs systems (system: f (import nixpkgs { inherit system; }));
-      upstream = builtins.fromJSON (builtins.readFile ./upstream.json);
-      imageManifest = builtins.fromJSON (builtins.readFile ./image-manifest.json);
+      # The single Scion pin: version, commit, and every hash derived from it.
+      # scripts/update.py rewrites it; image-manifest.json follows the same rev.
+      sources = builtins.fromJSON (builtins.readFile ./sources.json);
+      # Checked where the digests are used, not at the top level, so the source
+      # packages still evaluate mid-update while the new images are building.
+      imageManifest =
+        let manifest = builtins.fromJSON (builtins.readFile ./image-manifest.json);
+        in assert lib.assertMsg (manifest.upstreamRev == sources.rev && manifest.tag == sources.imageTag)
+          "image-manifest.json must describe the images built from sources.json (same rev and imageTag)";
+          manifest;
     in
-    assert lib.assertMsg (imageManifest.upstreamRev == upstream.rev)
-      "image-manifest.json and upstream.json must pin the same Scion revision";
     {
       packages = forSystems (pkgs:
         let
           # Built from the pinned source with the Hub fixes in nix/package.nix.
-          google-scion-source = pkgs.callPackage ./nix/package.nix {
-            src = scion-src;
-            inherit (upstream) version rev;
-          };
-          # Hash-checked release binary; no local Go or Node build.
-          google-scion = import ./nix/published-binaries.nix {
-            inherit pkgs;
-            inherit (upstream) version binaryRelease;
-          };
+          google-scion-source = pkgs.callPackage ./nix/package.nix { inherit sources; };
+          # Upstream's release binary, hash-checked; no local Go or Node build.
+          google-scion = import ./nix/upstream-binaries.nix { inherit pkgs sources; };
           image-puller = import ./nix/pull-images.nix {
             inherit pkgs;
             manifest = imageManifest;
@@ -50,7 +46,7 @@
           scion-server-image = import ./nix/server-image.nix {
             inherit pkgs;
             scion = google-scion-source;
-            tag = upstream.imageTag;
+            tag = sources.imageTag;
           };
         });
 
@@ -79,6 +75,14 @@
             manifest = imageManifest;
           };
           modules = import ./nix/tests/modules.nix { inherit pkgs nixpkgs nix-darwin self; };
+          update-script = pkgs.runCommand "scion-update-script-tests" {
+            nativeBuildInputs = [ pkgs.python3 ];
+            PYTHONDONTWRITEBYTECODE = "1";
+          } ''
+            cd ${./scripts}
+            python3 -m unittest -q test_update
+            touch "$out"
+          '';
         } // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           server-image = packages.scion-server-image;
         });

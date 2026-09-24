@@ -13,10 +13,12 @@ Harness images are Linux images for `linux/amd64` and `linux/arm64`. macOS runs 
 
 Scion looks up each image as `<image_registry>/scion-<harness>:latest`, where `image_registry` comes from `SCION_IMAGE_REGISTRY` or `settings.yaml`. That name is a mutable tag, so scion-nix pins the images another way:
 
-1. The images workflow builds every harness in upstream's `harnesses/*/Dockerfile` from the commit pinned in [upstream.json](../upstream.json), then records each platform's digest.
+1. The images workflow builds every harness in upstream's `harnesses/*/Dockerfile` from the commit pinned in [sources.json](../sources.json), then records each platform's digest.
 2. The pull app pulls `ghcr.io/phynics/scion-<harness>@<digest>` for the host's architecture, then tags it as `<registry>/scion-<harness>:latest` in the local container store.
 
 That way, the `:latest` tag Scion resolves always points at the image built from the pinned commit.
+
+In the registry, harness images are published under `:scion-<version>` when an [update PR](operations.md#updating-scion) is prepared. Their registry `:latest` tag moves only after that PR merges. The pull app never depends on the registry's `:latest`.
 
 ### Pull the images yourself
 
@@ -96,7 +98,7 @@ To run a Runtime Broker in the image, override the command and add `--enable-run
 
 ### Publishing
 
-Run the **Build Scion server image** workflow manually. It builds on an amd64 and an arm64 runner and pushes `scion-server:<imageTag>-<arch>`. It then creates the multi-arch tags `scion-server:<imageTag>` and `scion-server:latest`.
+[publish.yml](../.github/workflows/publish.yml) publishes the image after every merge that changes the Scion pin. You can also run **Build Scion server image** manually. It builds on an amd64 and an arm64 runner and pushes `scion-server:<imageTag>-<arch>`. It then creates the multi-arch tags `scion-server:<imageTag>` and `scion-server:latest`.
 
 ## Upstream images the modules do not use
 
